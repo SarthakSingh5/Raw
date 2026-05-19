@@ -57,10 +57,11 @@ public class Npc : MonoBehaviour
 
     #region Gun Properties and Delegates
 
-    public bool carryingGun = true;
+    public bool carryingGun = false;
 
 
     private bool aiming = false;
+    private bool throwing = false;
 
     public void SetAim(bool aim)
     {
@@ -75,6 +76,21 @@ public class Npc : MonoBehaviour
     }
 
     public bool Aiming => aiming;
+
+    public void SetThrow(bool throwItem)
+    {
+        if (carryingGun)
+        {
+            this.throwing = throwItem;
+        }
+        else
+        {
+            this.throwing = false;
+        }
+    }
+
+    public bool Throwing => throwing;
+
 
 
     public UnityAction TryShoot;
@@ -95,6 +111,11 @@ public class Npc : MonoBehaviour
 
     public bool isPanicking = false;
 
+    [Header("Weapon System")]
+    public Weapon weapon; // Centralized reference
+
+    public void LassoThrow()=>weapon?.LassoThrow();
+
 
 
 
@@ -108,6 +129,11 @@ public class Npc : MonoBehaviour
         if (anim == null)
         {
             Debug.LogError($"Animator not found on '{gameObject.name}'");
+        }
+
+        if (weapon == null)
+        {
+            weapon = GetComponentInChildren<Weapon>();
         }
     }
 

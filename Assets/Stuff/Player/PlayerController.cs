@@ -60,22 +60,23 @@ public partial class PlayerController : NpcController
     }
 
 
-    // void OnAttack(InputValue input)
-    // {
-    //     attacking = input.isPressed;
+    void OnAttack(InputValue input)
+    {
+        attacking = input.isPressed;
+        npc.SetThrow(attacking);
 
-    //     if (npc.Alive)
-    //     {
-    //         if (attacking)
-    //         {
-    //             npc.TryShoot?.Invoke();
-    //         }
-    //         else
-    //         {
-    //             npc.NotShoot?.Invoke();
-    //         }
-    //     }
-    // }
+        // if (npc.Alive)
+        // {
+        //     if (attacking)
+        //     {
+        //         npc.TryShoot?.Invoke();
+        //     }
+        //     else
+        //     {
+        //         npc.NotShoot?.Invoke();
+        //     }
+        // }
+    }
 
     void OnLook(InputValue input)
     {

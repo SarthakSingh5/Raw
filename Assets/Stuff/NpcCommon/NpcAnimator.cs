@@ -21,6 +21,10 @@ public class NpcAnimator : NpcComponent
         }
 
         npc.anim.SetBool("Aim", npc.Aiming);
+        if (npc.Throwing)
+        {
+            npc.anim.SetTrigger("Throw");
+        }
 
         
 

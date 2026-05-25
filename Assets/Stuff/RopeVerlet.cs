@@ -1,61 +1,92 @@
 using UnityEngine;
 using System.Collections.Generic;
-using UnityEngine.InputSystem;
 
 public class RopeVerlet : MonoBehaviour
 {
-    [Header("Rope")]
-    [SerializeField] private int numOfRopeSegments = 50;
-    [SerializeField] private float ropeSegmentLength = 0.225f;
+    [Header("Rope Structure")]
+    [SerializeField] private int numOfRopeSegments = 40;
+    [SerializeField] private float ropeSegmentLength = 0.25f;
 
-    [Header("Physics")]
-    [SerializeField] private Vector2 gravityForce = new Vector2(0f, -2f);
-    [SerializeField] private float dampingFactor = 0.98f; //optional
+    [Header("3D Physics Simulation")]
+    [SerializeField] private Vector3 gravityForce = new Vector3(0f, -9.81f, 0f);
+    [SerializeField] private float dampingFactor = 0.96f; 
     [SerializeField] private LayerMask collisionMask;
-    [SerializeField] private float collisionRadius = 0.1f;
-    [SerializeField] private float bounceFactor = 0.1f;
-    [SerializeField] private float correctionClampAmount = 0.1f;
+    [SerializeField] private float collisionRadius = 0.12f;
 
-    [Header("Constraints")]
-    [SerializeField] private int numOFConstraintRuns = 50;
+    [Header("Throw Speed Mechanics")]
+    [SerializeField] private float travelSpeed = 45f;
+    [SerializeField] private float loopWaveSwell = 0.4f;
 
-    [Header("Optimizations")]
-    [SerializeField] private int collisionSegmentInterval = 2;
+    [Header("Constraints Solvers")]
+    [SerializeField] private int numOFConstraintRuns = 15;
 
     private LineRenderer lineRenderer;
-    private List<RopeSegment> ropeSegments = new List<RopeSegment>();
-    private Vector3 ropeStartPoint;
+    private List<RopeSegment3D> ropeSegments = new List<RopeSegment3D>();
+    
+    private Transform trackingHand;
+    private Vector3 pointOfImpact;
+    private bool ropeFired = false;
+    private float flyProgress = 0f;
 
     private void Awake()
     {
         lineRenderer = GetComponent<LineRenderer>();
         lineRenderer.positionCount = numOfRopeSegments;
+        
+        // Hide visual line renderer completely on initialization awake frame
+        gameObject.SetActive(false);
+    }
 
-        ropeStartPoint = Camera.main.ScreenToWorldPoint(Mouse.current.position.ReadValue());
+    public void LaunchRope(Transform handAnchor, Vector3 targetWorldPosition)
+    {
+        trackingHand = handAnchor;
+        pointOfImpact = targetWorldPosition;
+        flyProgress = 0f;
+        ropeFired = true;
 
+        ropeSegments.Clear();
+        Vector3 spawnOrigin = handAnchor.position;
+        Vector3 headingDir = (targetWorldPosition - spawnOrigin).normalized;
+
+        // Initialize segments huddled together, adding a dynamic forward velocity pop
         for (int i = 0; i < numOfRopeSegments; i++)
         {
-            ropeSegments.Add(new RopeSegment(ropeStartPoint));
-            ropeStartPoint.y -= ropeSegmentLength;
+            RopeSegment3D segment = new RopeSegment3D(spawnOrigin);
+            
+            // Build progressive trailing segment weight bias metrics
+            float forwardFactor = (float)i / (float)numOfRopeSegments;
+            Vector3 burstVelocity = headingDir * travelSpeed * forwardFactor;
+            
+            // Recreate loop opening curves using structural sinus offsets
+            if (i > 0 && i < numOfRopeSegments - 1)
+            {
+                Vector3 curveNormal = Vector3.Cross(headingDir, Vector3.up).normalized;
+                burstVelocity += curveNormal * Mathf.Sin(i * 0.4f) * loopWaveSwell;
+            }
+
+            segment.OldPosition = spawnOrigin - (burstVelocity * Time.fixedDeltaTime);
+            ropeSegments.Add(segment);
         }
+
+        gameObject.SetActive(true);
     }
 
     private void Update()
     {
+        if (!ropeFired) return;
         DrawRope();
     }
 
     private void FixedUpdate()
     {
-        Simulate();
+        if (!ropeFired) return;
+
+        Simulate3D();
 
         for (int i = 0; i < numOFConstraintRuns; i++)
         {
-            ApplyConstraints();
-            if (i % collisionSegmentInterval == 0)
-            {
-                HandleCollisions();
-            }
+            Apply3DConstraints();
+            Resolve3DCollisions();
         }
     }
 
@@ -69,47 +100,56 @@ public class RopeVerlet : MonoBehaviour
         lineRenderer.SetPositions(ropePositions);
     }
 
-    private void Simulate()
+    private void Simulate3D()
     {
+        float rangeGap = Vector3.Distance(trackingHand.position, pointOfImpact);
+        float timeFrame = rangeGap / travelSpeed;
+        flyProgress = Mathf.Clamp01(flyProgress + (Time.fixedDeltaTime / timeFrame));
+
         for (int i = 0; i < ropeSegments.Count; i++)
         {
-            RopeSegment segment = ropeSegments[i];
-            Vector2 velocity = (segment.CurrentPosition - segment.OldPosition) * dampingFactor;
+            RopeSegment3D segment = ropeSegments[i];
+            Vector3 travelDistance = (segment.CurrentPosition - segment.OldPosition) * dampingFactor;
 
             segment.OldPosition = segment.CurrentPosition;
-            segment.CurrentPosition += velocity;
+            segment.CurrentPosition += travelDistance;
             segment.CurrentPosition += gravityForce * Time.fixedDeltaTime;
 
             ropeSegments[i] = segment;
         }
+
+        // Lock tip segment movement updates smoothly to the trajectory arc endpoint over frames
+        RopeSegment3D tailTip = ropeSegments[ropeSegments.Count - 1];
+        tailTip.CurrentPosition = Vector3.Lerp(trackingHand.position, pointOfImpact, flyProgress);
+        ropeSegments[ropeSegments.Count - 1] = tailTip;
     }
 
-    private void ApplyConstraints()
+    private void Apply3DConstraints()
     {
-        // Keep first point attached to the mouse
-        RopeSegment firstSegment = ropeSegments[0];
-        firstSegment.CurrentPosition = Camera.main.ScreenToWorldPoint(Mouse.current.position.ReadValue());
-        ropeSegments[0] = firstSegment;
+        // Anchor point 1: Clamp your rope root transformation array block directly to the moving bone node
+        RopeSegment3D leadSegment = ropeSegments[0];
+        leadSegment.CurrentPosition = trackingHand.position;
+        ropeSegments[0] = leadSegment;
 
+        // Anchor point 2: Apply 3D distance spacing checks across structural nodes
         for (int i = 0; i < numOfRopeSegments - 1; i++)
         {
-            RopeSegment currentSeg = ropeSegments[i];
-            RopeSegment nextSeg = ropeSegments[i + 1];
+            RopeSegment3D currentSeg = ropeSegments[i];
+            RopeSegment3D nextSeg = ropeSegments[i + 1];
 
-            float dist = (currentSeg.CurrentPosition - nextSeg.CurrentPosition).magnitude;
-            float difference = (dist - ropeSegmentLength);
-
-            Vector2 changeDir = (currentSeg.CurrentPosition - nextSeg.CurrentPosition).normalized;
-            Vector2 changeVector = changeDir * difference;
+            float distance = Vector3.Distance(currentSeg.CurrentPosition, nextSeg.CurrentPosition);
+            float lengthError = distance - ropeSegmentLength;
+            Vector3 alignmentDir = (currentSeg.CurrentPosition - nextSeg.CurrentPosition).normalized;
+            Vector3 resolutionVector = alignmentDir * lengthError;
 
             if (i != 0)
             {
-                currentSeg.CurrentPosition -= (changeVector * 0.5f);
-                nextSeg.CurrentPosition += (changeVector * 0.5f);
+                currentSeg.CurrentPosition -= resolutionVector * 0.5f;
+                nextSeg.CurrentPosition += resolutionVector * 0.5f;
             }
             else
             {
-                nextSeg.CurrentPosition += changeVector;
+                nextSeg.CurrentPosition += resolutionVector;
             }
 
             ropeSegments[i] = currentSeg;
@@ -117,53 +157,49 @@ public class RopeVerlet : MonoBehaviour
         }
     }
 
-    private void HandleCollisions()
+    private void Resolve3DCollisions()
     {
         for (int i = 1; i < ropeSegments.Count; i++)
         {
-            RopeSegment segment = ropeSegments[i];
-            Vector2 velocity = segment.CurrentPosition - segment.OldPosition;
+            RopeSegment3D segment = ropeSegments[i];
+            Vector3 lateralVelocity = segment.CurrentPosition - segment.OldPosition;
 
-            Collider2D[] colliders = Physics2D.OverlapCircleAll(segment.CurrentPosition, collisionRadius, collisionMask);
+            Collider[] targetsHit = Physics.OverlapSphere(segment.CurrentPosition, collisionRadius, collisionMask);
 
-            foreach (Collider2D collider in colliders)
+            foreach (Collider hitObj in targetsHit)
             {
-                Vector2 closestPoint = collider.ClosestPoint(segment.CurrentPosition);
-                float distance = Vector2.Distance(segment.CurrentPosition, closestPoint);
+                Vector3 boundaryPoint = hitObj.ClosestPoint(segment.CurrentPosition);
+                float gapDistance = Vector3.Distance(segment.CurrentPosition, boundaryPoint);
 
-                // If within the collision radius, resolve
-                if (distance < collisionRadius)
+                if (gapDistance < collisionRadius)
                 {
-                    Vector2 normal = (segment.CurrentPosition - closestPoint).normalized;
-
-                    if (normal == Vector2.zero)
+                    Vector3 surfaceNormal = (segment.CurrentPosition - boundaryPoint).normalized;
+                    if (surfaceNormal == Vector3.zero)
                     {
-                        // Fallback method
-                        normal = (segment.CurrentPosition - (Vector2)collider.transform.position).normalized;
+                        surfaceNormal = (segment.CurrentPosition - hitObj.transform.position).normalized;
                     }
 
-                    float depth = collisionRadius - distance;
-                    segment.CurrentPosition += normal * depth;
+                    float penetrationDepth = collisionRadius - gapDistance;
+                    segment.CurrentPosition += surfaceNormal * penetrationDepth;
 
-                    velocity = Vector2.Reflect(velocity, normal) * bounceFactor;
+                    lateralVelocity = Vector3.Reflect(lateralVelocity, surfaceNormal) * 0.05f;
                 }
             }
 
-            segment.OldPosition = segment.CurrentPosition - velocity;
+            segment.OldPosition = segment.CurrentPosition - lateralVelocity;
             ropeSegments[i] = segment;
         }
     }
 
-    public struct RopeSegment
+    public struct RopeSegment3D
     {
-        public Vector2 CurrentPosition;
-        public Vector2 OldPosition;
+        public Vector3 CurrentPosition;
+        public Vector3 OldPosition;
 
-        public RopeSegment(Vector2 pos)
+        public RopeSegment3D(Vector3 initialPos)
         {
-            CurrentPosition = pos;
-            OldPosition = pos;
+            CurrentPosition = initialPos;
+            OldPosition = initialPos;
         }
     }
-
 }

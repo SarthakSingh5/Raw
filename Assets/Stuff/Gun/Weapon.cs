@@ -144,8 +144,16 @@ public class Weapon : NpcComponent
 
     public void LassoThrow()
     {
-        // Implement your lasso throwing logic here
-        Debug.Log("Lasso thrown!");
+        // Highlighted: Route the animation trigger framework straight out to your modular scriptable shooter configuration
+        if (shooter != null && muzzle != null)
+        {
+            shooter.Shoot(muzzle, npc.currentBloom);
+            PlayWeaponSound(shooter.shotSound);
+        }
+        else
+        {
+            Debug.LogWarning("LassoThrow method triggered on Weapon instance, but its modular Shooter configuration properties are blank!");
+        }
     }
 
     private void PlayWeaponSound(AudioClip clip)
